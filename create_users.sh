@@ -1,101 +1,93 @@
 #!/bin/bash
 
-log_file="/var/log/user_management.log"
-password_file="/var/secure/user_passwords.txt"
+LOG_FILE="/var/log/user_management.log"
+PASSWORD_FILE="/var/secure/user_passwords.txt"
+USER_FILE="$1"
 
-# Log message function
+# Function to log messages with a timestamp
 log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | sudo tee -a "$log_file"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | sudo tee -a "$LOG_FILE"
 }
 
-# Check for root
-if [ "$(id -u)" -ne 0 ]; then
-    log_message "Error: Script must be run as root"
+# Check if the user file is provided
+if [ -z "$USER_FILE" ]; then
+    echo "Usage: $0 <name-of-text-file>"
     exit 1
 fi
 
-# Check if input file is provided
-if [ -z "$1" ]; then
-    log_message "Error: No input file provided"
-    exit 1
-fi
-input_file="$1"
-
-# Check if input file exists
-if [ ! -f "$input_file" ]; then
-    log_message "Input file not found: $input_file"
-    exit 1
-fi
-
-log_message "Processing input file: $input_file"
-
-# Ensure log file and password file exist and have correct permissions
+# Create necessary directories and files with sudo
 sudo mkdir -p /var/secure
-sudo touch "$log_file"
-sudo touch "$password_file"
-sudo chmod 600 "$password_file"
+sudo touch "$LOG_FILE"
+sudo touch "$PASSWORD_FILE"
+sudo chmod 600 "$PASSWORD_FILE"
 
-# Loop through each line in the input file
+# Ensure the file ends with a newline
+echo "" >> "$USER_FILE"
+
 while IFS=';' read -r username groups; do
-    if [ -z "$username" ] || [ -z "$groups" ]; then
-        log_message "Skipping invalid line: $username;$groups"
+    # Remove whitespace
+    username=$(echo "$username" | xargs)
+    groups=$(echo "$groups" | xargs)
+
+    # Skip empty lines and invalid usernames
+    if [ -z "$username" ]; then
         continue
     fi
 
-    log_message "Processing line: $username;$groups"
-
-    # Create user if not exists
-    if ! dscl . -read "/Users/$username" &>/dev/null; then
-        password=$(openssl rand -base64 12)
-        if dscl . -create "/Users/$username"; then
-            log_message "User created: $username"
-            dscl . -create "/Users/$username" UserShell "/bin/bash"
-            dscl . -create "/Users/$username" NFSHomeDirectory "/Users/$username"
-            mkdir -p "/Users/$username"
-            chown "$username:staff" "/Users/$username"
-            chmod 755 "/Users/$username"
-            dscl . -passwd "/Users/$username" "$password"
-            log_message "Password created for user: $username"
-            echo "$username:$password" | sudo tee -a "$password_file"
-            sudo chmod 600 "$password_file"
+    # Create personal group for the user
+    if ! dscl . -read "/Groups/$username" &>/dev/null; then
+        sudo dscl . -create "/Groups/$username" &>/dev/null
+        if [ $? -eq 0 ]; then
+            log_message "Personal group for $username created."
         else
-            log_message "Failed to create user: $username"
+            log_message "Failed to create personal group $username."
             continue
         fi
     else
-        log_message "User already exists: $username"
+        log_message "Personal group for $username already exists."
     fi
 
-    # Handle multiple groups separated by commas
-    IFS=',' read -r -a group_array <<< "$groups"
-    
-    # Process each group for the user
-    for group in "${group_array[@]}"; do
-        if [ -z "$group" ]; then
-            log_message "Skipping invalid group name: $group"
-            continue
-        fi
+    # Create user with personal group
+    if ! dscl . -read "/Users/$username" &>/dev/null; then
+        password=$(openssl rand -base64 12)
+        sudo dscl . -create "/Users/$username" &>/dev/null
+        sudo dscl . -create "/Users/$username" UserShell "/bin/bash" &>/dev/null
+        sudo dscl . -create "/Users/$username" NFSHomeDirectory "/Users/$username" &>/dev/null
+        sudo dscl . -create "/Users/$username" PrimaryGroupID "$(dscl . -read /Groups/staff PrimaryGroupID | awk '{print $2}')" &>/dev/null
+        sudo dscl . -passwd "/Users/$username" "$password" &>/dev/null
+        sudo mkdir -p "/Users/$username" &>/dev/null
+        sudo chown "$username:staff" "/Users/$username" &>/dev/null
+        sudo chmod 755 "/Users/$username" &>/dev/null
+        
+        log_message "User with username $username created."
+        log_message "Password set for user with username $username."
+        echo "$username,$password" | sudo tee -a "$PASSWORD_FILE" &>/dev/null
+        echo "$username,$password"
+    else
+        log_message "User with username $username already exists."
+    fi
 
-        # Check if group exists
+    # Add user to specified groups
+    IFS=',' read -r -a group_array <<< "$groups"
+    for group in "${group_array[@]}"; do
+        group=$(echo "$group" | xargs)
         if ! dscl . -read "/Groups/$group" &>/dev/null; then
-            if dscl . -create "/Groups/$group"; then
-                log_message "Group created: $group"
+            sudo dscl . -create "/Groups/$group" &>/dev/null
+            if [ $? -eq 0 ]; then
+                log_message "Group $group created."
             else
-                log_message "Failed to create group: $group"
+                log_message "Failed to create group $group."
                 continue
             fi
-        else
-            log_message "Group already exists: $group"
         fi
-
-        # Add user to group
-        if dseditgroup -o edit -a "$username" -t user "$group"; then
-            log_message "Added user $username to group $group"
+        sudo dseditgroup -o edit -a "$username" -t user "$group" &>/dev/null
+        if [ $? -eq 0 ]; then
+            log_message "User with username $username added to group $group."
         else
-            log_message "Failed to add user $username to group $group"
+            log_message "Failed to add user $username to group $group."
         fi
     done
 
-done < "$input_file"
+done < "$USER_FILE"
 
-log_message "User creation process completed"
+log_message "User creation process completed."
