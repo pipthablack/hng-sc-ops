@@ -35,6 +35,7 @@ sudo touch "$log_file"
 sudo touch "$password_file"
 sudo chmod 600 "$password_file"
 
+# Loop through each line in the input file
 while IFS=';' read -r username groups; do
     if [ -z "$username" ] || [ -z "$groups" ]; then
         log_message "Skipping invalid line: $username;$groups"
@@ -43,24 +44,7 @@ while IFS=';' read -r username groups; do
 
     log_message "Processing line: $username;$groups"
 
-    # Handle multiple groups separated by commas
-    IFS=',' read -r -a group_array <<< "$groups"
-    
-    # Create groups if they do not exist
-    for group in "${group_array[@]}"; do
-        if ! dscl . -read "/Groups/$group" &>/dev/null; then
-            if dscl . -create "/Groups/$group"; then
-                log_message "Group created: $group"
-            else
-                log_message "Failed to create group: $group"
-                continue
-            fi
-        else
-            log_message "Group already exists: $group"
-        fi
-    done
-
-    # Create user if not exists and handle personal group
+    # Create user if not exists
     if ! dscl . -read "/Users/$username" &>/dev/null; then
         password=$(openssl rand -base64 12)
         if dscl . -create "/Users/$username"; then
@@ -68,7 +52,7 @@ while IFS=';' read -r username groups; do
             dscl . -create "/Users/$username" UserShell "/bin/bash"
             dscl . -create "/Users/$username" NFSHomeDirectory "/Users/$username"
             mkdir -p "/Users/$username"
-            #chown "$username:staff" "/Users/$username"
+            chown "$username:staff" "/Users/$username"
             chmod 755 "/Users/$username"
             dscl . -passwd "/Users/$username" "$password"
             log_message "Password created for user: $username"
@@ -82,27 +66,36 @@ while IFS=';' read -r username groups; do
         log_message "User already exists: $username"
     fi
 
-    # Create personal group for the user if not exists
-    if ! dscl . -read "/Groups/$username" &>/dev/null; then
-        if dscl . -create "/Groups/$username"; then
-            log_message "Personal group created: $username"
-            dscl . -append "/Groups/$username" GroupMembership "$username"
-        else
-            log_message "Failed to create personal group: $username"
+    # Handle multiple groups separated by commas
+    IFS=',' read -r -a group_array <<< "$groups"
+    
+    # Process each group for the user
+    for group in "${group_array[@]}"; do
+        if [ -z "$group" ]; then
+            log_message "Skipping invalid group name: $group"
             continue
         fi
-    else
-        log_message "Personal group already exists: $username"
-    fi
 
-    # Add user to groups
-    for group in "${group_array[@]}"; do
-        if dscl . -append "/Groups/$group" GroupMembership "$username"; then
+        # Check if group exists
+        if ! dscl . -read "/Groups/$group" &>/dev/null; then
+            if dscl . -create "/Groups/$group"; then
+                log_message "Group created: $group"
+            else
+                log_message "Failed to create group: $group"
+                continue
+            fi
+        else
+            log_message "Group already exists: $group"
+        fi
+
+        # Add user to group
+        if dseditgroup -o edit -a "$username" -t user "$group"; then
             log_message "Added user $username to group $group"
         else
             log_message "Failed to add user $username to group $group"
         fi
     done
+
 done < "$input_file"
 
 log_message "User creation process completed"
