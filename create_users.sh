@@ -5,7 +5,7 @@ password_file="/var/secure/user_passwords.txt"
 
 # Log message function
 log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$log_file"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | sudo tee -a "$log_file"
 }
 
 # Check for root
@@ -50,7 +50,7 @@ while IFS=';' read -r username groups; do
     for group in "${group_array[@]}"; do
         if ! dscl . -read "/Groups/$group" &>/dev/null; then
             if dscl . -create "/Groups/$group"; then
-                log_message "$(date '+%Y-%m-%d %H:%M:%S') - Personal group $group created."
+                log_message "Group created: $group"
             else
                 log_message "Failed to create group: $group"
                 continue
@@ -64,16 +64,16 @@ while IFS=';' read -r username groups; do
     if ! dscl . -read "/Users/$username" &>/dev/null; then
         password=$(openssl rand -base64 12)
         if dscl . -create "/Users/$username"; then
-            log_message "$(date '+%Y-%m-%d %H:%M:%S') - User $username created."
+            log_message "User created: $username"
             dscl . -create "/Users/$username" UserShell "/bin/bash"
             dscl . -create "/Users/$username" NFSHomeDirectory "/Users/$username"
             mkdir -p "/Users/$username"
             #chown "$username:staff" "/Users/$username"
             chmod 755 "/Users/$username"
             dscl . -passwd "/Users/$username" "$password"
-            echo "$username,$password" | sudo tee -a "$password_file"
+            log_message "Password created for user: $username"
+            echo "$username:$password" | sudo tee -a "$password_file"
             sudo chmod 600 "$password_file"
-            log_message "$(date '+%Y-%m-%d %H:%M:%S') - Password set for user $username."
         else
             log_message "Failed to create user: $username"
             continue
@@ -85,7 +85,7 @@ while IFS=';' read -r username groups; do
     # Create personal group for the user if not exists
     if ! dscl . -read "/Groups/$username" &>/dev/null; then
         if dscl . -create "/Groups/$username"; then
-            log_message "$(date '+%Y-%m-%d %H:%M:%S') - Personal group $username created."
+            log_message "Personal group created: $username"
             dscl . -append "/Groups/$username" GroupMembership "$username"
         else
             log_message "Failed to create personal group: $username"
@@ -98,11 +98,11 @@ while IFS=';' read -r username groups; do
     # Add user to groups
     for group in "${group_array[@]}"; do
         if dscl . -append "/Groups/$group" GroupMembership "$username"; then
-            log_message "$(date '+%Y-%m-%d %H:%M:%S') - User $username added to group $group."
+            log_message "Added user $username to group $group"
         else
             log_message "Failed to add user $username to group $group"
         fi
     done
 done < "$input_file"
 
-log_message "$(date '+%Y-%m-%d %H:%M:%S') - User creation process completed"
+log_message "User creation process completed"
