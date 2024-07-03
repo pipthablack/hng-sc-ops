@@ -55,14 +55,21 @@ while IFS=';' read -r username groups; do
         sudo dscl . -create "/Users/$username" NFSHomeDirectory "/Users/$username" &>/dev/null
         sudo dscl . -create "/Users/$username" PrimaryGroupID "$(dscl . -read /Groups/staff PrimaryGroupID | awk '{print $2}')" &>/dev/null
         sudo dscl . -passwd "/Users/$username" "$password" &>/dev/null
-        sudo mkdir -p "/Users/$username" &>/dev/null
-        sudo chown "$username:staff" "/Users/$username" &>/dev/null
-        sudo chmod 755 "/Users/$username" &>/dev/null
         
-        log_message "User with username $username created."
-        log_message "Password set for user with username $username."
-        echo "$username,$password" | sudo tee -a "$PASSWORD_FILE" &>/dev/null
-        echo "$username,$password"
+        # Verify user creation
+        if dscl . -read "/Users/$username" &>/dev/null; then
+            sudo mkdir -p "/Users/$username" &>/dev/null
+            sudo chown "$username:staff" "/Users/$username" &>/dev/null
+            sudo chmod 755 "/Users/$username" &>/dev/null
+
+            log_message "User with username $username created."
+            log_message "Password set for user with username $username."
+            echo "$username,$password" | sudo tee -a "$PASSWORD_FILE" &>/dev/null
+            echo "$username,$password"
+        else
+            log_message "Failed to create user $username."
+            continue
+        fi
     else
         log_message "User with username $username already exists."
     fi
